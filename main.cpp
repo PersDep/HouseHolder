@@ -133,6 +133,7 @@ int main(int argc, char** argv)
     Matrix matrix(workData.MakeMatrix());
     Matrix matrixBackup(matrix);
 
+    MPI_Barrier(MPI_COMM_WORLD);
     double startForward = MPI_Wtime();
 
     vector<dataType> solution(matrix.GetRows());
@@ -162,6 +163,7 @@ int main(int argc, char** argv)
         }
     }
 
+    MPI_Barrier(MPI_COMM_WORLD);
     double endForward = MPI_Wtime();
     double startBackward = MPI_Wtime();
 
@@ -192,6 +194,7 @@ int main(int argc, char** argv)
     copy(receiveBuffer, receiveBuffer + solution.size(), solution.begin());
     delete[] receiveBuffer;
 
+    MPI_Barrier(MPI_COMM_WORLD);
     double endBackward = MPI_Wtime();
 
     if (PRESUMED_RANK == procRank) {
