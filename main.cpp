@@ -36,12 +36,11 @@ public:
 
     dataType& operator()(size_t i, size_t j) { return matrix[j * rows + i]; }
 
-
     void Print()
     {
-        for (size_t j = 0; j < rows; j++) {
-            for (size_t i = j; i < matrix.size(); i += rows)
-                cout << matrix[i] << ' ';
+        for (size_t i = 0; i < rows; i++) {
+            for (size_t j = i; j < matrix.size(); j += rows)
+                cout << matrix[j] << ' ';
             cout << endl;
         }
         cout << endl;
@@ -108,14 +107,14 @@ public:
             offset = procRank;
             for (size_t j = 0; j < cols; j++) {
                 dataType tmp = in.is_open() ? f(in) : f(i, j);
-                if (j == rows) {
+                if (j == rows && !in.is_open()) {
                     dataType summ = 0;
                     for (size_t k = 0; k < rows; k++) {
                         int presumedRank = int(k % procAmount);
                         if (presumedRank == procRank)
                             summ += matrix(i, k / procAmount);
-                        MPI_Reduce(&summ, &tmp, 1, MPI_DATATYPE, MPI_SUM, int((cols - 1) % procAmount), MPI_COMM_WORLD);
                     }
+                    MPI_Reduce(&summ, &tmp, 1, MPI_DATATYPE, MPI_SUM, int((cols - 1) % procAmount), MPI_COMM_WORLD);
                 }
                 if (j % procAmount == procRank) {
                     matrix(i, j - offset) = tmp;
@@ -153,8 +152,6 @@ int main(int argc, char** argv)
     WorkData workData(procRank, procAmount, argv[1]);
     Matrix matrix(workData.MakeMatrix());
     Matrix matrixBackup(matrix);
-
-    matrix.Print();
 
     MPI_Barrier(MPI_COMM_WORLD);
     double startForward = MPI_Wtime();
