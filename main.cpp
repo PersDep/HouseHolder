@@ -10,6 +10,7 @@
 using namespace std;
 
 #define dataType double
+MPI_Datatype MPI_DATATYPE = MPI_DOUBLE;
 
 #define PRESUMED_RANK (workData.GetCols()-1)%procAmount
 #define CUR_PRESUMED_RANK int(i%procAmount)
@@ -34,6 +35,17 @@ public:
     size_t GetRows() { return rows; }
 
     dataType& operator()(size_t i, size_t j) { return matrix[j * rows + i]; }
+
+
+    void Print()
+    {
+        for (size_t j = 0; j < rows; j++) {
+            for (size_t i = j; i < matrix.size(); i += rows)
+                cout << matrix[i] << ' ';
+            cout << endl;
+        }
+        cout << endl;
+    }
 };
 
 class WorkData
@@ -47,7 +59,8 @@ class WorkData
 
     dataType f(size_t i, size_t j)
     {
-        return i + j + 1;
+        //return 1 / dataType(i + j + 1);
+        return max(i, j);
     }
 
     dataType f(ifstream &in)
@@ -95,6 +108,15 @@ public:
             offset = procRank;
             for (size_t j = 0; j < cols; j++) {
                 dataType tmp = in.is_open() ? f(in) : f(i, j);
+                if (j == rows) {
+                    dataType summ = 0;
+                    for (size_t k = 0; k < rows; k++) {
+                        int presumedRank = int(k % procAmount);
+                        if (presumedRank == procRank)
+                            summ += matrix(i, k / procAmount);
+                        MPI_Reduce(&summ, &tmp, 1, MPI_DATATYPE, MPI_SUM, int((cols - 1) % procAmount), MPI_COMM_WORLD);
+                    }
+                }
                 if (j % procAmount == procRank) {
                     matrix(i, j - offset) = tmp;
                     offset += procAmount - 1;
@@ -119,7 +141,6 @@ dataType ScalarProduct(dataType *vec1, dataType *vec2, size_t size)
 int main(int argc, char** argv)
 {
     MPI_Init(&argc, &argv);
-    MPI_Datatype mpiDatatype = MPI_DOUBLE;
 
     int procRank, procAmount;
     MPI_Comm_size(MPI_COMM_WORLD, &procAmount);
@@ -132,6 +153,8 @@ int main(int argc, char** argv)
     WorkData workData(procRank, procAmount, argv[1]);
     Matrix matrix(workData.MakeMatrix());
     Matrix matrixBackup(matrix);
+
+    matrix.Print();
 
     MPI_Barrier(MPI_COMM_WORLD);
     double startForward = MPI_Wtime();
@@ -153,7 +176,7 @@ int main(int argc, char** argv)
             offset += procAmount - 1;
         }
 
-        MPI_Bcast(solution.data(), int(solution.size()), mpiDatatype, CUR_PRESUMED_RANK, MPI_COMM_WORLD);
+        MPI_Bcast(solution.data(), int(solution.size()), MPI_DATATYPE, CUR_PRESUMED_RANK, MPI_COMM_WORLD);
 
         for (size_t curColIndex = i / procAmount; curColIndex < workData.GetLocalCols(); curColIndex++) {
             dataType *curCol = matrix.GetCol(curColIndex);
@@ -172,7 +195,7 @@ int main(int argc, char** argv)
     if (PRESUMED_RANK == procRank)
         copy(matrix.GetCol(workData.GetLocalCols()),
              matrix.GetCol(workData.GetLocalCols()) + rightColumn.size(), rightColumn.begin());
-    MPI_Bcast(rightColumn.data(), int(rightColumn.size()), mpiDatatype, int(PRESUMED_RANK), MPI_COMM_WORLD);
+    MPI_Bcast(rightColumn.data(), int(rightColumn.size()), MPI_DATATYPE, int(PRESUMED_RANK), MPI_COMM_WORLD);
 
     solution = vector<dataType>(solution.size(), 0);
     size_t startCol = workData.GetLocalCols();
@@ -180,7 +203,7 @@ int main(int argc, char** argv)
         dataType diff = 0, receiveBuffer;
         for (size_t j = startCol; j < workData.GetLocalCols(); j++)
             diff += matrix(size_t(i), j) * solution[j * procAmount + procRank];
-        MPI_Reduce(&diff, &receiveBuffer, 1, mpiDatatype, MPI_SUM, CUR_PRESUMED_RANK, MPI_COMM_WORLD);
+        MPI_Reduce(&diff, &receiveBuffer, 1, MPI_DATATYPE, MPI_SUM, CUR_PRESUMED_RANK, MPI_COMM_WORLD);
         diff = receiveBuffer;
 
         if (CUR_PRESUMED_RANK == procRank) {
@@ -190,14 +213,32 @@ int main(int argc, char** argv)
     }
 
     dataType *receiveBuffer = new dataType[solution.size()];
-    MPI_Allreduce(solution.data(), receiveBuffer, int(solution.size()), mpiDatatype, MPI_SUM, MPI_COMM_WORLD);
+    MPI_Allreduce(solution.data(), receiveBuffer, int(solution.size()), MPI_DATATYPE, MPI_SUM, MPI_COMM_WORLD);
     copy(receiveBuffer, receiveBuffer + solution.size(), solution.begin());
     delete[] receiveBuffer;
 
     MPI_Barrier(MPI_COMM_WORLD);
     double endBackward = MPI_Wtime();
 
+    vector<dataType> result(solution.size(), 0);
+    for (size_t i = 0; i < result.size(); i++) {
+        offset = procRank;
+        for (size_t j = 0; j < workData.GetLocalCols(); j++) {
+            result[i] += matrixBackup(i, j) * solution[offset];
+            offset += procAmount;
+        }
+    }
+
+    receiveBuffer = new dataType[solution.size()];
+    MPI_Reduce(result.data(), receiveBuffer, int(result.size()), MPI_DATATYPE, MPI_SUM, int(PRESUMED_RANK), MPI_COMM_WORLD);
+    copy(receiveBuffer, receiveBuffer + result.size(), result.begin());
+    delete[] receiveBuffer;
+
     if (PRESUMED_RANK == procRank) {
+        for (size_t i = 0; i < result.size(); i++)
+            result[i] -= matrixBackup.GetCol(workData.GetLocalCols())[i];
+        dataType discrepancy = sqrt(ScalarProduct(result.data(), result.data(), result.size()));
+
         for (size_t i = 0; i < solution.size(); i++)
             cout << solution[i] << ' ';
         cout << endl;
@@ -205,6 +246,7 @@ int main(int argc, char** argv)
              << "; Process amount: " << procAmount
              << "; Forward (microseconds): " << (endForward - startForward) * 1000000
              << "; Backward (microseconds): " << (endBackward - startBackward) * 1000000
+             << "; Discrepancy: " << discrepancy << endl
              << endl;
     }
 
