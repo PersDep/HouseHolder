@@ -40,7 +40,7 @@ public:
     {
         for (size_t i = 0; i < rows; i++) {
             for (size_t j = i; j < matrix.size(); j += rows)
-                cout << matrix[j] << ' ';
+                cout << scientific << matrix[j] << ' ';
             cout << endl;
         }
         cout << endl;
@@ -129,9 +129,9 @@ public:
     }
 };
 
-dataType ScalarProduct(dataType *vec1, dataType *vec2, size_t size)
+dataType ScalarProduct(const dataType *vec1, const dataType *vec2, size_t size)
 {
-    float sum = 0;
+    dataType sum = 0;
     for (size_t i = 0; i < size; i++)
         sum += vec1[i] * vec2[i];
     return sum;
@@ -152,6 +152,8 @@ int main(int argc, char** argv)
     WorkData workData(procRank, procAmount, argv[1]);
     Matrix matrix(workData.MakeMatrix());
     Matrix matrixBackup(matrix);
+
+    //matrix.Print();
 
     MPI_Barrier(MPI_COMM_WORLD);
     double startForward = MPI_Wtime();
@@ -181,6 +183,8 @@ int main(int argc, char** argv)
             for (size_t j = 0; j < solution.size(); j++)
                 curCol[j] -= 2 * scal * solution[j];
         }
+
+        //matrix.Print();
     }
 
     MPI_Barrier(MPI_COMM_WORLD);
